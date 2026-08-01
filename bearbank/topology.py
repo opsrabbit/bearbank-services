@@ -88,8 +88,17 @@ _RABBIT = [
     ServiceSpec(
         name="ledger-service", tenant="default", org="opsrabbit", port=8082,
         datastore="postgresql:ledger", team="payments", tier=1,
-        latency_threshold_ms=1200,
-        description="Double-entry write. Slow here surfaces as slow in payment-service.",
+        # Deliberately LOOSER than payment-service's 1500ms, and this is the
+        # crux of the cascade scenario. Ledger is a batch-ish write path where
+        # seconds are tolerable; payment-service is user-facing with a tighter
+        # SLO. So ledger can degrade badly enough to break its caller while
+        # staying comfortably inside its own threshold — it never alarms, and
+        # the only incident is on payment-service. That is precisely how real
+        # cascades hide, and without the call graph there is nothing pointing
+        # at ledger at all.
+        latency_threshold_ms=3000,
+        description="Double-entry write. Looser SLO than its caller, so it can "
+                    "degrade without alarming — the cascade hides here.",
     ),
     ServiceSpec(
         name="fraud-check", tenant="default", org="opsrabbit", port=8083,
