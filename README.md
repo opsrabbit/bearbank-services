@@ -6,7 +6,7 @@ land in `opsrabbit/bear-gitops`.
 | Path | |
 |---|---|
 | `services/<name>/handlers.py` | That service's own logic. One copy of each defect, so a fix touches one service. |
-| `shared/` | Runtime shared by every service — topology, HTTP fan-out, pool behaviour. |
+| `bearbank/` | Runtime shared by every service — topology, HTTP fan-out, pool behaviour. |
 
 Services: - checkout-api - payment-service - ledger-service - fraud-check - notification-service 
 
