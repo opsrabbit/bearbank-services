@@ -11,9 +11,10 @@ trace context propagated. That is what produces genuine parent/child spans acros
 processes, which is what Jaeger's dependency DAG and the knowledge graph are
 built from. The previous demo simulated this and the graph saw nothing.
 
-Config is fetched from the tenant's GitOps repo and reloaded on an interval, so a
-merged config PR takes effect without a redeploy — which is what lets an incident
-auto-resolve during a live demo.
+Config arrives as a mounted file. ArgoCD syncs the tenant's GitOps repo into a
+ConfigMap, Kubernetes mounts it, and this process re-reads it on an interval —
+so a merged config PR takes effect without a redeploy, which is what lets an
+incident auto-resolve during a live demo. Nothing here talks to GitHub.
 """
 
 from __future__ import annotations
@@ -91,40 +92,34 @@ def current_config() -> dict[str, Any]:
 
 
 async def _load_config() -> None:
-    """Refresh config from the mounted file or the GitOps repo.
+    """Refresh config from the mounted file.
 
-    Failures leave the previous config in place — a demo service must not fall
-    back to healthy defaults mid-scenario just because GitHub was briefly
-    unreachable, or the fault would appear to fix itself.
+    The file is the ONLY mechanism, deliberately. ArgoCD watches the tenant's
+    GitOps repo, generates a ConfigMap from it, and Kubernetes mounts that at
+    /config; the kubelet refreshes the mounted file within about a minute of
+    the ConfigMap changing. So a merged config-fix PR reaches a running pod
+    without this process ever talking to GitHub.
+
+    An earlier version also fetched from raw.githubusercontent as a fallback.
+    That was dead weight — the GitOps repos are private, so it always failed —
+    and worse, it was a second config path that could disagree with the one
+    ArgoCD manages. Removed rather than fixed.
+
+    A read failure leaves the previous config in place. Falling back to healthy
+    defaults mid-scenario would make a fault appear to fix itself.
     """
     global _config, _config_source
 
     path = os.getenv("CONFIG_FILE_PATH", f"/config/{SERVICE_NAME}.yaml")
-    if os.path.exists(path):
-        try:
-            with open(path) as fh:
-                loaded = yaml.safe_load(fh) or {}
-            _config = {**DEFAULT_CONFIG, **loaded}
-            _config_source = f"file:{path}"
-            return
-        except Exception as exc:  # noqa: BLE001 — demo service, never crash on config
-            print(f"config read failed ({path}): {exc}")
-
-    repo = os.getenv("GITOPS_REPO")
-    if not repo:
-        return
-    url = (
-        f"https://raw.githubusercontent.com/{repo}/"
-        f"{os.getenv('GITOPS_BRANCH', 'main')}/{SPEC.config_path}"
-    )
+    if not os.path.exists(path):
+        return                       # keep defaults until ArgoCD lands the mount
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=10.0)
-            resp.raise_for_status()
-        _config = {**DEFAULT_CONFIG, **(yaml.safe_load(resp.text) or {})}
-        _config_source = f"gitops:{repo}"
-    except Exception as exc:  # noqa: BLE001
-        print(f"config fetch failed ({url}): {exc}")
+        with open(path) as fh:
+            loaded = yaml.safe_load(fh) or {}
+        _config = {**DEFAULT_CONFIG, **loaded}
+        _config_source = f"file:{path}"
+    except Exception as exc:  # noqa: BLE001 — demo service, never crash on config
+        print(f"config read failed ({path}): {exc}")
 
 
 async def _config_reload_loop() -> None:

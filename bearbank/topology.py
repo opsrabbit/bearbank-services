@@ -56,7 +56,18 @@ class ServiceSpec:
 
     @property
     def config_path(self) -> str:
-        return f"config/{self.name}.yaml"
+        """Path in the GitOps repo that a config fix edits.
+
+        Under ``bearbank/`` rather than the repo root for two reasons. It gives
+        the estate its own kustomize root, so ArgoCD can generate a
+        ``bearbank-config`` ConfigMap without touching the existing
+        ``bear-payment-config`` generator beside it — and kustomize cannot
+        reference files above its own root without relaxing load restrictions
+        globally. It also sidesteps a real collision: the pre-existing
+        ``config/payment-service.yaml`` belongs to the old bear-payment demo,
+        and BearBank has a ``payment-service`` of its own.
+        """
+        return f"bearbank/config/{self.name}.yaml"
 
     @property
     def source_path(self) -> str:
