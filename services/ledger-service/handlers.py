@@ -8,4 +8,7 @@ from typing import Any
 
 
 def handle(request: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    return {}
+    # Guard against missing or malformed request data to prevent unhandled exceptions
+    if not isinstance(request, dict) or "order_id" not in request:
+        return {"status": "skipped", "reason": "missing_order_id"}
+    return {"status": "processed"}
