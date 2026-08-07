@@ -8,4 +8,5 @@ from typing import Any
 
 
 def handle(request: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    return {}
+    # Ensure consistent response structure for latency tracking and downstream fan-out
+    return {"status": "ok"}
