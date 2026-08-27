@@ -27,7 +27,7 @@ def compute_risk_weight(config: dict[str, Any]) -> float:
 
     active_bands = bands - excluded
     if active_bands <= 0:
-        return 1.0 / bands
+        return 0.0
     return 1.0 / active_bands
 
 
