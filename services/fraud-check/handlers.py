@@ -26,7 +26,9 @@ def compute_risk_weight(config: dict[str, Any]) -> float:
     excluded = int(risk.get("excluded_bands", 0) or 0)
 
     active_bands = bands - excluded
-    return 1.0 / active_bands          # ZeroDivisionError when excluded == bands
+    if active_bands <= 0:
+        return 1.0 / bands
+    return 1.0 / active_bands
 
 
 def handle(request: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
