@@ -31,6 +31,36 @@ def compute_risk_weight(config: dict[str, Any]) -> float:
     return 1.0 / active_bands
 
 
+def price_multiplier(request: dict[str, Any], config: dict[str, Any]) -> float:
+    """Currency multiplier applied to a scored request.
+
+    NOTE: this is the demo's latent defect, and it replaced the divide-by-zero
+    above once that was fixed AND deployed — a scenario whose defect is guarded
+    in production tests nothing, and fails quietly, because no incident fires
+    and it reads as "the agent did nothing".
+
+    Scores are normalised against a base currency, but the base is read straight
+    out of the multiplier table without checking it is there. Point
+    ``pricing.base_currency`` at a currency that is not configured and every
+    request raises KeyError.
+
+    The fix belongs here, in code: the per-request lookup below already defaults
+    a missing currency, and the base should do the same. Pointing the config back
+    at a configured currency would merely stop reaching the defect, which is the
+    wrong answer for the same reason it was wrong for the divide-by-zero.
+    """
+    pricing = config.get("pricing") or {}
+    multipliers = pricing.get("multipliers") or {}
+    currency = str(request.get("currency") or "USD")
+
+    base_currency = str(pricing.get("base_currency") or "USD")
+    base = multipliers[base_currency]
+    return multipliers.get(currency, 1.0) / base
+
+
 def handle(request: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    """Score one request. Raises ZeroDivisionError when the defect is reached."""
-    return {"risk_weight": compute_risk_weight(config)}
+    """Score one request. Raises KeyError when the latent defect is reached."""
+    return {
+        "risk_weight": compute_risk_weight(config),
+        "price_multiplier": price_multiplier(request, config),
+    }

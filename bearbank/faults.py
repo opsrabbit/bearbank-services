@@ -53,14 +53,29 @@ FAULTS: dict[str, FaultSpec] = {
             "and a fraction of requests start timing out."
         ),
     ),
-    "divide_by_zero": FaultSpec(
-        name="divide_by_zero",
+    "divide_by_zero_guarded": FaultSpec(
+        name="divide_by_zero_guarded",
         category="code_bug",
         fix_kind="code",
         fix_hint="compute_risk_weight in services/fraud-check/handlers.py",
         description=(
-            "Latent divide-by-zero in risk weighting, reachable once every band "
-            "is excluded. Config exposes it; the fix is a guard in code."
+            "Excluding every band would once have divided by zero here. It is "
+            "GUARDED now and the guard is deployed, so this reports a nonsensical "
+            "config rather than a raising one — nothing can be scored when every "
+            "band is excluded. Kept as the worked example of a code fix."
+        ),
+    ),
+    "unknown_base_currency": FaultSpec(
+        name="unknown_base_currency",
+        category="code_bug",
+        fix_kind="code",
+        fix_hint="price_multiplier in services/fraud-check/handlers.py",
+        description=(
+            "Scores are normalised against a base currency read straight out of "
+            "the multiplier table, so a base that is not configured raises "
+            "KeyError on every request. Deliberately not keyed on "
+            "features.new_pricing_engine, which already means pricing_engine_5xx "
+            "and classifies as error_rate rather than code_bug."
         ),
     ),
     "pricing_engine_5xx": FaultSpec(
@@ -101,9 +116,10 @@ def latency_multiplier(config: dict[str, Any]) -> float:
 def pool_is_starved(config: dict[str, Any]) -> bool:
     """True when the pool is small enough to also shed a few requests.
 
-    Real pool exhaustion times out as well as slowing down; latency alone would
-    never produce the error-rate signal that makes a downstream edge show up as
-    ELEVATED ERRORS in the graph — which is the entire cascade scenario.
+    Real pool exhaustion times out as well as slowing down, so the edge shows
+    both signals. Latency alone is now enough — the graph flags a neighbour far
+    slower than its siblings as ELEVATED LATENCY even at 0% errors — but shedding
+    a few requests keeps this faithful to how pool exhaustion actually behaves.
     """
     pool_size = int(_dig(config, "database", "connection_pool_size", default=25) or 25)
     return pool_size < 5
@@ -118,11 +134,28 @@ def active_faults(config: dict[str, Any]) -> list[str]:
     active = []
     if int(_dig(config, "database", "connection_pool_size", default=25) or 25) < 25:
         active.append("pool_exhaustion")
+    # `divide_by_zero` is GUARDED and the guard is deployed, so this reports a
+    # config that WOULD have reached the old defect rather than one that raises.
+    # Kept because the config is still worth flagging as nonsensical — excluding
+    # every band means nothing can be scored — and because it documents what the
+    # worked code-fix example was.
     risk = config.get("risk") or {}
     if int(risk.get("excluded_bands", 0) or 0) >= int(risk.get("bands", 10) or 10):
-        active.append("divide_by_zero")
+        active.append("divide_by_zero_guarded")
     if (config.get("features") or {}).get("new_pricing_engine"):
         active.append("pricing_engine_5xx")
+
+    # The live code defect: price_multiplier reads its base straight out of the
+    # multiplier table. A base currency that is not configured raises KeyError on
+    # every request. Deliberately NOT keyed on new_pricing_engine, which already
+    # means pricing_engine_5xx — two scenarios injecting one fault would make
+    # them indistinguishable.
+    pricing = config.get("pricing") or {}
+    multipliers = pricing.get("multipliers") or {}
+    base_currency = str(pricing.get("base_currency") or "USD")
+    if base_currency not in multipliers:
+        active.append("unknown_base_currency")
+
     return active
 
 
