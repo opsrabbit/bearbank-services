@@ -31,3 +31,66 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  # Rebuilding the image is not the same as running it.
+  #
+  # `imagePullPolicy: Always` only takes effect when a pod is CREATED, so
+  # pushing a new `:latest` changes nothing that is already running. Measured
+  # 2026-08-30: PR #8 fixed the fraud-check divide-by-zero, this workflow built
+  # and pushed it on 08-27T04:14 (tag 5a08faf) — and the pods were still on a
+  # 29-day-old digest, so the defect was live in production while the repo
+  # showed it fixed.
+  #
+  # That divergence breaks the agent's code-fix loop in a way that looks like a
+  # model failure: the running service raises the exception, triage correctly
+  # classifies code_bug, and remediation is then shown a repo file that no
+  # longer contains the bug. Its SEARCH anchor cannot match, so no PR is opened
+  # and 935s is spent waiting for one. Config fixes never hit this because Argo
+  # CD syncs the ConfigMap directly.
+  rollout:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PI_SSH_KEY }}" > ~/.ssh/pi-key.pem
+          chmod 600 ~/.ssh/pi-key.pem
+          cat > ~/.ssh/config << EOF
+          Host pi
+            HostName ${{ secrets.PI_HOST }}
+            User ${{ secrets.PI_USER }}
+            Port ${{ secrets.PI_PORT }}
+            IdentityFile ~/.ssh/pi-key.pem
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+          chmod 600 ~/.ssh/config
+
+      # Restart every bearbank namespace, not just the default tenant: each
+      # tenant runs its own copy of the estate from this same image, and a fix
+      # that reaches one tenant but not another is worse than one that reaches
+      # neither — the two then disagree about what the code does.
+      - name: Roll the estate onto the new image
+        run: |
+          ssh pi 'set -e
+            for ns in $(kubectl get ns -o name | grep -o "bearbank-.*"); do
+              echo "== $ns"
+              kubectl -n "$ns" rollout restart deployment
+              kubectl -n "$ns" rollout status deployment --timeout=180s
+            done'
+
+      # Prove the running digest actually changed. A restart that silently
+      # re-pulled the same image would leave the loop just as broken while
+      # every step reported success.
+      - name: Verify the pods are on the new image
+        run: |
+          ssh pi 'kubectl -n bearbank-default get pods \
+            -o jsonpath="{range .items[*]}{.metadata.name}{\"\t\"}{.status.containerStatuses[0].imageID}{\"\n\"}{end}"'
