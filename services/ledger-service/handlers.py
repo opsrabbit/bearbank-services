@@ -8,6 +8,4 @@ from typing import Any
 
 
 def handle(request: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    if not request or not isinstance(request, dict):
-        return {}
-    return {}
+    return {"status": "processed", "order_id": request.get("order_id")}
