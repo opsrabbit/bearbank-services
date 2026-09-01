@@ -79,7 +79,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "database": {"connection_pool_size": 25, "query_timeout_ms": 15000},
     "risk": {"bands": 10, "excluded_bands": 0},
     "features": {"new_pricing_engine": False},
-    "pricing": {"multipliers": {"USD": 1.0, "GBP": 1.27, "EUR": 1.08}},
+    "pricing": {"multipliers": {"USD": 1.0, "GBP": 1.27, "EUR": 1.08},
+                "base_currency": "USD"},
     "service": {"artificial_latency_ms": 0},
 }
 
