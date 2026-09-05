@@ -30,7 +30,6 @@ import httpx
 import yaml
 from fastapi import FastAPI, HTTPException
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.propagate import inject
 from opentelemetry.sdk.resources import Resource
@@ -57,15 +56,57 @@ DOWNSTREAM_TIMEOUT_S = float(os.getenv("DOWNSTREAM_TIMEOUT_S", "10"))
 # Telemetry
 # ---------------------------------------------------------------------------
 
-_provider = TracerProvider(resource=Resource.create({"service.name": SERVICE_NAME}))
-_provider.add_span_processor(
-    BatchSpanProcessor(
-        OTLPSpanExporter(
-            endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317"),
-            insecure=True,
+def _span_exporter():
+    """Build the span exporter the way a customer's service would.
+
+    A real customer does not hand-roll this: they set the standard
+    ``OTEL_EXPORTER_OTLP_*`` variables and let the SDK read them. BearBank exists
+    to mirror a customer estate, so on the HTTP path it constructs the exporter
+    with **no arguments at all** and lets the SDK do exactly that. That is not
+    only more faithful, it dodges a real trap — an explicit ``endpoint=`` is used
+    VERBATIM by the HTTP exporter, while an endpoint the SDK reads from the
+    environment gets ``/v1/traces`` appended. Passing it in means remembering the
+    signal path; not passing it means the SDK is right by construction.
+
+    ⚠️ gRPC (4317) and HTTP (4318) are different endpoints, not a preference, and
+    the wrong one fails on the BatchSpanProcessor thread: no exception, no failed
+    request, no log line, just spans that never arrive. ``insecure=`` exists only
+    on the gRPC exporter — passing it to the HTTP one is a TypeError at import
+    time, which is at least loud.
+    """
+    protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317")
+
+    if protocol.startswith("http"):
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter as HTTPSpanExporter,
         )
+
+        # A misconfiguration that otherwise presents as silence: 4317 is the gRPC
+        # port, so an HTTP exporter aimed at it delivers nothing and says nothing.
+        if ":4317" in endpoint:
+            print(
+                f"[otel] WARNING {SERVICE_NAME}: protocol is {protocol} but the "
+                f"endpoint is {endpoint} — :4317 is the gRPC port, so no spans "
+                "will arrive. Use the OTLP/HTTP endpoint.",
+                flush=True,
+            )
+        # No arguments: endpoint (plus /v1/traces) and OTEL_EXPORTER_OTLP_HEADERS
+        # both come from the environment, which is where a customer puts them and
+        # where the ingest token belongs — never in the image.
+        print(f"[otel] {SERVICE_NAME}: http/protobuf -> {endpoint}", flush=True)
+        return HTTPSpanExporter()
+
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter as GRPCSpanExporter,
     )
-)
+
+    print(f"[otel] {SERVICE_NAME}: grpc -> {endpoint}", flush=True)
+    return GRPCSpanExporter(endpoint=endpoint, insecure=True)
+
+
+_provider = TracerProvider(resource=Resource.create({"service.name": SERVICE_NAME}))
+_provider.add_span_processor(BatchSpanProcessor(_span_exporter()))
 trace.set_tracer_provider(_provider)
 tracer = trace.get_tracer(__name__)
 
