@@ -5,10 +5,12 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
         "fastapi>=0.110" "uvicorn[standard]>=0.27" "httpx>=0.27" \
         "pydantic>=2.6" "pyyaml>=6.0" \
-        "opentelemetry-api>=1.24" "opentelemetry-sdk>=1.24" \
-        "opentelemetry-exporter-otlp-proto-grpc>=1.24" \
-        "opentelemetry-exporter-otlp-proto-http>=1.24" \
-        "opentelemetry-instrumentation-fastapi>=0.45b0"
+        "opentelemetry-api==1.39.1" "opentelemetry-sdk==1.39.1" \
+        "opentelemetry-exporter-otlp-proto-grpc==1.39.1" \
+        "opentelemetry-exporter-otlp-proto-http==1.39.1" \
+        "opentelemetry-distro==0.60b1" \
+        "opentelemetry-instrumentation-httpx==0.60b1" \
+        "opentelemetry-instrumentation-fastapi==0.60b1"
 
 COPY bearbank /app/bearbank
 COPY services /app/services
@@ -22,7 +24,10 @@ ENV PYTHONPATH=/app \
     BEARBANK_SERVICES_DIR=/app/services \
     BEARBANK_SERVICE=checkout-api \
     OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 \
-    OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+    OTEL_TRACES_EXPORTER=otlp \
+    OTEL_METRICS_EXPORTER=none \
+    OTEL_LOGS_EXPORTER=none
 
 # Port comes from topology.py so it cannot drift from the Service manifest.
-CMD ["sh", "-c", "exec python -m uvicorn bearbank.service:app --host 0.0.0.0 --port $(python -c \"from bearbank.topology import get_service;import os;print(get_service(os.environ['BEARBANK_SERVICE']).port)\")"]
+CMD ["sh", "-c", "export OTEL_SERVICE_NAME=\"${OTEL_SERVICE_NAME:-$BEARBANK_SERVICE}\"; exec opentelemetry-instrument python -m uvicorn bearbank.service:app --host 0.0.0.0 --port $(python -c \"from bearbank.topology import get_service;import os;print(get_service(os.environ['BEARBANK_SERVICE']).port)\")"]
