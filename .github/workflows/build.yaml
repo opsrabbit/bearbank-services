@@ -22,3 +22,53 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ghcr.io/${{ github.repository }}:rehearsal-${{ github.sha }}
+  bump-rehearsal:
+    needs: rehearsal-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: opsrabbit
+          repositories: bear-gitops
+      - uses: actions/checkout@v4
+        with:
+          repository: opsrabbit/bear-gitops
+          ref: ${{ github.ref_name }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Pin only the isolated fraud-check workload
+        env:
+          REHEARSAL_BRANCH: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          branch = os.environ['REHEARSAL_BRANCH']
+          match = re.fullmatch(r'codex/graphrobin-rehearsal/([a-z0-9-]+)/base', branch)
+          assert match, 'Not an isolated rehearsal base'
+          namespace = 'graphrobin-rehearsal-' + match[1]
+          assert os.environ['SOURCE_REPOSITORY'] == 'opsrabbit/bearbank-services'
+          sha = os.environ['SOURCE_SHA']
+          assert re.fullmatch(r'[a-f0-9]{40}', sha)
+          path = pathlib.Path('bearbank/rehearsal-fraud.json')
+          deployment = json.loads(path.read_text())
+          assert deployment['kind'] == 'Deployment'
+          assert deployment['metadata']['name'] == 'fraud-check'
+          assert deployment['metadata']['namespace'] == namespace
+          pod = deployment['spec']['template']['spec']
+          assert len(pod['containers']) == 1
+          pod['containers'][0]['image'] = 'ghcr.io/opsrabbit/bearbank-services:rehearsal-' + sha
+          pod['containers'][0]['volumeMounts'] = [m for m in pod['containers'][0].get('volumeMounts', []) if m['name'] != 'loop-fixture']
+          pod['volumes'] = [v for v in pod.get('volumes', []) if v['name'] != 'loop-fixture']
+          pod['imagePullSecrets'] = [{'name': 'rehearsal-registry-pull'}]
+          path.write_text(json.dumps(deployment, indent=2) + '\n')
+          PY
+          git config user.name 'autosre-rehearsal[bot]'
+          git config user.email 'autosre-rehearsal[bot]@users.noreply.github.com'
+          git add bearbank/rehearsal-fraud.json
+          git diff --cached --quiet || git commit -m "test: deploy rehearsal image $SOURCE_SHA"
+          git push origin "HEAD:refs/heads/$REHEARSAL_BRANCH"
