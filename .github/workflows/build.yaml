@@ -62,6 +62,7 @@ jobs:
           pod = deployment['spec']['template']['spec']
           assert len(pod['containers']) == 1
           pod['containers'][0]['image'] = 'ghcr.io/opsrabbit/bearbank-services:rehearsal-' + sha
+          pod['containers'][0]['imagePullPolicy'] = 'IfNotPresent'
           pod['containers'][0]['volumeMounts'] = [m for m in pod['containers'][0].get('volumeMounts', []) if m['name'] != 'loop-fixture']
           pod['volumes'] = [v for v in pod.get('volumes', []) if v['name'] != 'loop-fixture']
           pod['imagePullSecrets'] = [{'name': 'rehearsal-registry-pull'}]
