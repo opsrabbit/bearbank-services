@@ -12,3 +12,5 @@ Services: - checkout-api - payment-service - ledger-service - fraud-check - noti
 
 Generated from `demo/bearbank/` in the AutoSRE repo by
 `scripts/demo-seed-repos.sh`. Edit there and re-run, or edit here and port back.
+
+<!-- GraphRobin isolated graphrobin-broker-crash-20260925: do not merge. -->
