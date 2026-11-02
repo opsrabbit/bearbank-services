@@ -54,7 +54,7 @@ def price_multiplier(request: dict[str, Any], config: dict[str, Any]) -> float:
     currency = str(request.get("currency") or "USD")
 
     base_currency = str(pricing.get("base_currency") or "USD")
-    base = multipliers[base_currency]
+    base = multipliers.get(base_currency, 1.0)
     return multipliers.get(currency, 1.0) / base
 
 
